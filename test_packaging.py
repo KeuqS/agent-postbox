@@ -233,7 +233,7 @@ class Packaging(unittest.TestCase):
         assert spec and spec.loader
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        self.assertIn(f"agent_postbox-{mod.__version__}", self.wheel.name)
+        self.assertIn(f"tyko84_agent_postbox-{mod.__version__}", self.wheel.name)
         meta = next(d for n, d in wheel_members(self.wheel).items() if n.endswith("METADATA"))
         self.assertIn(f"Version: {mod.__version__}", meta.decode())
         self.assertIsNone(re.search(r'^version\s*=\s*"', (ROOT / "pyproject.toml").read_text(),
@@ -574,7 +574,7 @@ class ReproducibleBuild(unittest.TestCase):
                         .startswith("UNEXPECTED other-9.9.9.tar.gz"))
         d = base / "extra-file"
         d.mkdir()
-        (d / "agent_postbox-9.9.9-py3-none-any.whl").write_bytes(b"x")
+        (d / "tyko84_agent_postbox-9.9.9-py3-none-any.whl").write_bytes(b"x")
         shutil.copy2(self.out / "SHA256SUMS", d / "SHA256SUMS")
         self.assertEqual([b.split()[0] for b in mod.verify_dir(d, built)[1]], ["UNEXPECTED"])
         for label, text in (("path", good.replace("  ", "  dist/", 1)),

@@ -5,24 +5,39 @@ source, `__version__` in `agent_mail.py`; setuptools reads it statically.
 The wheel contains `agent_mail.py` and metadata only. The sdist is an explicit
 allow-list in `MANIFEST.in`; anything not listed does not ship (apart from the
 metadata setuptools itself generates: `PKG-INFO`, `setup.cfg` and
-`agent_postbox.egg-info/`).
+`tyko84_agent_postbox.egg-info/`).
 
-## This project is not the PyPI distribution of the same name
+## The distribution is `tyko84-agent-postbox`; `agent-postbox` on PyPI is someone else's
 
-This project is **not published on PyPI**. The PyPI distribution named
+This project is **not published on PyPI**. Its distribution name (what pip
+installs, lists and uninstalls) is `tyko84-agent-postbox`. The command is still
+`agent-postbox` and the module is still `agent_mail`; only the distribution name
+differs from them.
+
+The PyPI distribution named
 [`agent-postbox`](https://pypi.org/project/agent-postbox/) is a separate,
-unrelated project by a different author, so `pip install agent-postbox`
-installs that project, not this one. Always install from a clone
-(`python -m pip install ./agent-postbox`) or from a wheel built from a clone, as
+unrelated project by a different author, so `pip install agent-postbox` installs
+that project, not this one. Always install from a clone
+(`python -m pip install ./agent-postbox`, where `./agent-postbox` is the
+directory) or from a wheel attached to a release or built from a clone, as
 below. Nothing in this repository uploads anything to PyPI: that is a maintainer
-decision, and it would need a different distribution name (the `agent-postbox`
-command and the `agent_mail` module could stay as they are).
+decision.
 
-The two projects do not share a module or a command (this one installs the
-module `agent_mail` and the command `agent-postbox`), but they do share the
-distribution name, and pip keys on that: in one environment, installing either
-removes the other, and `pip install --upgrade agent-postbox` replaces this
-project with the PyPI one. Install and upgrade this project by path.
+Releases up to 0.3.0 used the distribution name `agent-postbox`, which pip
+cannot tell apart from the PyPI project. If an environment has one of those,
+remove it by its old name before installing this one, because both own
+`agent_mail.py` and the `agent-postbox` command:
+
+```sh
+python -m pip uninstall agent-postbox          # the old distribution name
+python -m pip install ./agent-postbox          # the clone, or a release wheel by path
+python -m pip show -f tyko84-agent-postbox     # Home-page is this repository; one module
+```
+
+The order matters. Installed over the old distribution, this one works until the
+old name is uninstalled; that removes `agent_mail.py` and the `agent-postbox`
+command, which both distributions list, and pip reports no problem. If that has
+happened, `python -m pip install --force-reinstall ./agent-postbox` restores them.
 
 ## Quick build
 
@@ -177,7 +192,7 @@ Put the downloaded wheel, sdist and `SHA256SUMS` in one directory.
    each file, with the rebuilt hash and the one found:
 
    ```text
-   DIFFERENT  agent_postbox-<version>-py3-none-any.whl
+   DIFFERENT  tyko84_agent_postbox-<version>-py3-none-any.whl
      rebuilt  <sha256>
      found    <sha256>
    ```
@@ -216,15 +231,14 @@ archive instead, and `pyproject.toml` is unchanged.
 * **Reference interpreter: CPython 3.12** (what CI's `packaging` job uses).
   CPython 3.11 and 3.13 produced the same bytes when this was written, but only
   3.12 is the reference: compare hashes made with 3.12.
-* **Expected, not yet verified: the same bytes on Linux and macOS.** Nothing in
-  either artifact is taken from the operating system, and both platforms'
-  CPython normally link the classic zlib, whose output for a given level is
-  expected to be the same across its 1.2 and 1.3 releases. But this has only been run on
-  macOS (zlib 1.2.12). Until CI has built one commit on both and compared
-  `SHA256SUMS`, treat cross-OS equality as a prediction. Where the interpreter
-  is linked against zlib-ng or another replacement (some Linux distributions
-  do this), the compressed bytes, and so both hashes, are expected to differ
-  while every member inside stays identical; `deflate_probe` will differ too.
+* **Verified in CI: the same bytes on Linux and macOS.** The `reproducible`
+  jobs build each commit on both and `reproducible-compare` fails if the two
+  `SHA256SUMS` differ. Nothing in either artifact is taken from the operating
+  system; the compression comes from zlib, and the classic zlib gives the same
+  output across its 1.2 and 1.3 releases. Where the interpreter is linked against
+  zlib-ng or another replacement (some Linux distributions do this), the
+  compressed bytes, and so both hashes, are expected to differ while the contents
+  stay identical: compare the unpacked files instead.
 * **Not guaranteed across pins.** A commit that changes `build-constraints.txt`
   changes the wheel hash (the `WHEEL` file names the setuptools version) and
   may change generated metadata in both artifacts. That is a change in the

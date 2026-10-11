@@ -12,9 +12,10 @@ there. Users install from a clone (`python -m pip install ./agent-postbox`),
 from the wheel attached to a release, or from a wheel they build themselves
 (see [packaging.md](packaging.md)).
 
-The name `agent-postbox` on PyPI belongs to an unrelated project. Release notes
-and documentation must therefore never say `pip install agent-postbox`: without
-the leading `./` that command installs somebody else's code.
+This project's distribution name is `tyko84-agent-postbox`. The name
+`agent-postbox` on PyPI belongs to an unrelated project, so release notes and
+documentation must never say `pip install agent-postbox`: without the leading
+`./` that command installs somebody else's code.
 
 ## 1. Decide the version
 
@@ -47,9 +48,9 @@ On a branch off `main`:
 
 Branch protection on `main` is expected to require these status checks, all
 reported by GitHub Actions from `ci.yml`: `lint`, `packaging`, `publication`, and
-the `selftest` cells chosen as representative (at the time of writing
-`selftest (ubuntu-latest, 3.10)`, `selftest (ubuntu-latest, 3.13)` and
-`selftest (macos-latest, 3.12)`), and to apply to administrators as well.
+all eight `selftest` cells (Linux and macOS, Python 3.10 to 3.13), to require a
+pull request, and to apply to administrators as well. The required names embed
+the matrix labels, so the matrix and the required list change together.
 `publication` is the job that runs `check_publication.py` with the forbidden list
 from the repository secret; if it were not in the required list, a pull request
 could be merged with that scan failing. This is the expected configuration, not a
@@ -143,8 +144,8 @@ one stops the run:
 5. `python scripts/repro_build.py --check --outdir dist` builds twice and the two
    results are byte-identical;
 6. `twine check` passes;
-7. `dist` holds exactly `agent_postbox-X.Y.Z-py3-none-any.whl` and
-   `agent_postbox-X.Y.Z.tar.gz`;
+7. `dist` holds exactly `tyko84_agent_postbox-X.Y.Z-py3-none-any.whl` and
+   `tyko84_agent_postbox-X.Y.Z.tar.gz`;
 8. `check_publication.py --require-patterns --allowlist <empty file> --dist dist
    --git-log` passes: tracked files, both artifacts (forbidden list, generic
    detectors and the builder-identity rules), the history of the tagged commit,
@@ -226,8 +227,8 @@ repositories). It ties the file's hash to this repository, the workflow file and
 the tag that built it:
 
 ```sh
-gh attestation verify agent_postbox-X.Y.Z-py3-none-any.whl -R tyko84/agent-postbox
-gh attestation verify agent_postbox-X.Y.Z.tar.gz -R tyko84/agent-postbox
+gh attestation verify tyko84_agent_postbox-X.Y.Z-py3-none-any.whl -R tyko84/agent-postbox
+gh attestation verify tyko84_agent_postbox-X.Y.Z.tar.gz -R tyko84/agent-postbox
 ```
 
 **Rebuild and compare.** The build is reproducible, so the same commit and the
@@ -236,8 +237,7 @@ same toolchain give the same bytes. From a clone:
 ```sh
 git checkout vX.Y.Z                                   # the tag's own build script and pins
 python3.12 -m venv /tmp/pb-verify && /tmp/pb-verify/bin/python -m pip install -r requirements-dev.txt
-PIP_CONSTRAINT="$PWD/requirements-dev.txt" /tmp/pb-verify/bin/python scripts/repro_build.py --ref vX.Y.Z --outdir /tmp/pb-rebuilt
-(cd /tmp/pb-rebuilt && sha256sum -c /path/to/SHA256SUMS)
+/tmp/pb-verify/bin/python scripts/repro_build.py --ref vX.Y.Z --verify /path/to/downloaded-files
 ```
 
 The hashes are tied to the toolchain, and the release notes record it:
@@ -245,14 +245,10 @@ The hashes are tied to the toolchain, and the release notes record it:
 * **Interpreter: CPython 3.12**, the reference interpreter; the workflow asks
   `actions/setup-python` for `3.12`.
 * **setuptools.** The wheel's `WHEEL` file names the setuptools version that
-  generated it, so another setuptools gives another hash. The workflow passes
-  `PIP_CONSTRAINT=<checkout>/requirements-dev.txt` to the build, so a
-  `setuptools==` line in that file fixes the version for the release and for
-  anyone rebuilding as above. If the file at the tag has no such line, the
-  build used the newest setuptools of that day: take the version from the
-  `generator:` entry in the release notes and write it into a constraints file
-  of your own (`echo 'setuptools==<version>' > /tmp/c.txt`, then
-  `PIP_CONSTRAINT=/tmp/c.txt`).
+  generated it, so another setuptools gives another hash. The version is pinned
+  in `build-constraints.txt`, which `scripts/repro_build.py` reads from the
+  commit being built, so the release and anyone rebuilding the tag use the same
+  one. The BUILDINFO block in the release notes records it.
 * **zlib.** Both files are compressed by zlib. A different zlib can produce
   different compressed bytes from identical content. If only that differs,
   compare the contents instead: unpack both wheels (`unzip`) and both sdists
