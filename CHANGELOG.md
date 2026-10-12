@@ -7,7 +7,46 @@ behaviour).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- The pickup adapter (`hooks/agent_mail_check.py`) names, after the live mail, what
+  `AGENT_MAIL_IDENTITY` holds and owes: its unsuperseded claims (scope, since when,
+  live until / `NOT live` once lapsed) and the open ASKs addressed to it that still
+  owe a reply. Five rows per list, then `+N more`; the rows are those of
+  `status --json` (PROTOCOL.md section 34), never a subject or a body. Read-only,
+  still silent on every error and when there is nothing to say (section 9).
+- `CONTRIBUTING.md`: a field report walkthrough (what to collect from `doctor`,
+  `status --json` and `--version`, and what never to paste).
+
+### Changed
+
+- CPython 3.14 is a supported interpreter: the `selftest` matrix in `ci.yml` has a 3.14
+  cell on Linux and macOS, and `pyproject.toml` carries the 3.14 classifier.
+  `Requires-Python` stays `>=3.10`, and the release build stays on 3.12, the reference
+  interpreter for the published hashes. Branch protection must require the two new
+  `selftest (..., 3.14)` checks (docs/release-process.md, "Required checks").
+- `docs/release-process.md`: how the published release is verified (the commands run for
+  v0.4.0), what GitHub's immutable releases would change for this repository (not
+  enabled; the owner decides), and how to rehearse the release workflow in a scratch
+  repository.
+- `test_publication.py` (`Workflows`) also checks that the release workflow's `publish`
+  job creates the release with `--draft` and `--verify-tag` and never publishes, marks
+  latest or edits a release itself: a person always publishes.
+
+### Fixed
+
+- `send` with `AGENT_MAIL_DIR` set to a path the OS refuses to stat (too long) printed a
+  traceback; it is now `NO MAILBOX at <path>`, one line, exit 2, nothing written
+  (PROTOCOL.md section 38).
+- An `AGENT_MAIL_PROJECT` the OS refuses to stat printed a traceback from every command;
+  it is now ignored, as a value naming no directory always was.
+- The text views (`list`, `inbox`, `show`, `status`) printed a traceback, after a partial
+  listing, for a subject, path or body in another alphabet when stdout could only carry
+  ASCII (`PYTHONIOENCODING=ascii`, a C locale); each character stdout cannot carry is now
+  printed as its `\x`, `\u` or `\U` escape, exit 0. `--json` output was ASCII already
+  and is unchanged.
+- `--help` with stdout closed printed the help on stderr; it now prints nothing and exits
+  0, as every command does when stdout is gone (section 35).
 
 ## [0.4.0] - 2026-10-11
 
