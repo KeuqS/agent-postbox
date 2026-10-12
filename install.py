@@ -35,12 +35,16 @@ Safety rules for a settings merge, in priority order:
      this tree is occupied -- refuse rather than mint a nested owner.
   6. Do not install a mailbox into this spec checkout. The public repo is the
      tool, not an inbox -- use AGENT_MAIL_DIR or install into a project.
-  7. A registered command must not be able to block a prompt. Codex treats exit
-     code 2 from a UserPromptSubmit hook as "block the prompt", and an
-     interpreter that cannot open its script exits 2; so the Codex command ends
-     in `|| true`, and `--adapter codex` is refused (before anything is copied)
+  7. A registered command must not be able to block a prompt. Claude Code and
+     Codex both treat exit code 2 from a UserPromptSubmit hook as "block the
+     prompt", and an interpreter that cannot open its script exits 2; so both
+     commands end in `|| true`. An older claude-code registration without it
+     (exactly the command this installer used to write) is upgraded in place,
+     with a backup. `--adapter codex` is refused (before anything is copied)
      where the command could not resolve: no git repository, a destination the
      shell would re-interpret, or a `.codex/` this installer cannot merge safely.
+     `--adapter claude-code` is refused the same way, exit 2 and before anything
+     is copied, when `.claude/settings.json` cannot be merged safely.
 """
 from __future__ import annotations
 
@@ -102,7 +106,22 @@ def hook_command(dest_rel: str, adapter: str = "claude-code") -> str:
         # see safety rule 7.
         return (f'{python_cmd()} "$(git rev-parse --show-toplevel)/{dest_rel}/hooks/'
                 f'{HOOK_MARKER}" || true')
-    return f'{python_cmd()} "$CLAUDE_PROJECT_DIR/{dest_rel}/hooks/{HOOK_MARKER}"'
+    # Claude Code: "exit 2 ... Blocks the prompt, so it never reaches Claude"
+    # (https://code.claude.com/docs/en/hooks). `|| true`: see safety rule 7.
+    return f'{python_cmd()} "$CLAUDE_PROJECT_DIR/{dest_rel}/hooks/{HOOK_MARKER}" || true'
+
+
+# The claude-code command this installer wrote before it ended in `|| true`:
+# `<interpreter> "$CLAUDE_PROJECT_DIR/<dest>/hooks/agent_mail_check.py"` and
+# nothing else. Only this exact shape is upgraded; a hand-written command that
+# merely mentions the adapter is the user's and is left alone.
+LEGACY_CLAUDE_COMMAND = re.compile(
+    r'\S+ "\$CLAUDE_PROJECT_DIR/[^"$`\\]+/hooks/' + re.escape(HOOK_MARKER) + '"')
+
+
+def legacy_command(command: str, adapter: str) -> bool:
+    """True for an older claude-code registration that can block a prompt."""
+    return adapter == "claude-code" and LEGACY_CLAUDE_COMMAND.fullmatch(command) is not None
 
 
 def shape_problem(settings: object) -> str | None:
@@ -123,6 +142,33 @@ def shape_problem(settings: object) -> str | None:
     return None
 
 
+def not_a_config_dir(project: Path, adapter: str) -> str | None:
+    """The host's config directory exists but is not a directory: no file can go in it."""
+    folder = project / HOST_CONFIG[adapter][0]
+    if folder.exists() and not folder.is_dir():
+        return f"{folder} exists and is not a directory; move it, then re-run"
+    return None
+
+
+def claude_refusal(project: Path) -> str | None:
+    """Why `--adapter claude-code` must not be registered here, or None. Reads
+    only, and runs before anything is copied (as `codex_refusal` does)."""
+    problem = not_a_config_dir(project, "claude-code")
+    path = project.joinpath(*HOST_CONFIG["claude-code"])
+    if problem or not path.exists():
+        return problem
+    try:
+        raw = path.read_text(encoding="utf-8-sig")  # tolerate a BOM
+        settings = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as e:
+        return (f"{path} is not valid JSON ({e}). Refusing to touch it -- "
+                "fix it by hand, then re-run")
+    except (OSError, UnicodeDecodeError) as e:
+        return f"cannot read {path} ({e.__class__.__name__}). Refusing to touch it"
+    problem = shape_problem(settings)
+    return f"{path} {problem}. Refusing to touch it" if problem else None
+
+
 def codex_refusal(project: Path, dest_rel: str) -> str | None:
     """Why `--adapter codex` must not be registered here, or None. Reads only."""
     if not (project / ".git").exists():
@@ -131,6 +177,9 @@ def codex_refusal(project: Path, dest_rel: str) -> str | None:
     if not re.fullmatch(r"[A-Za-z0-9._/ -]+", dest_rel):
         return (f"--adapter codex cannot quote --dest {dest_rel!r} safely in a shell command; "
                 "use letters, digits, `.`, `_`, `-`, `/` and spaces")
+    folder = not_a_config_dir(project, "codex")
+    if folder:
+        return folder
     toml = project / ".codex" / "config.toml"
     try:
         if toml.is_file() and CODEX_INLINE_HOOKS.search(toml.read_text(encoding="utf-8-sig")):
@@ -159,11 +208,19 @@ def registered_hook(settings: dict) -> dict | None:
     return None
 
 
+_PYTHON_NAME = re.compile(r"^python[0-9.]*$")
+
+
 def interpreter_missing(command: str) -> bool:
-    """True when the hook's interpreter (first word) can't be found here --
-    e.g. an older install wrote bare `python` on a host that only has python3."""
+    """True when the interpreter this installer would have written (a Python:
+    bare `python`/`python3`, or a path) can't be found here -- e.g. an older
+    install wrote bare `python` on a host that only has python3. Any other first
+    word (a shell builtin such as `cd`, an `X=1` assignment, `env`, `sh`) is a
+    command somebody wrote by hand: it is not ours to judge or to rewrite."""
     first = command.strip().split(" ", 1)[0].strip('"')
-    return bool(first) and shutil.which(first) is None and not Path(first).is_file()
+    if "/" in first:
+        return not Path(first).is_file()
+    return bool(_PYTHON_NAME.match(first)) and shutil.which(first) is None
 
 
 def already_registered(settings: dict) -> bool:
@@ -190,6 +247,15 @@ def merge_settings(path: Path, dest_rel: str, check: bool, adapter: str = "claud
         hook = registered_hook(settings)
         if hook is not None:
             old = str(hook.get("command", ""))
+            if not interpreter_missing(old) and legacy_command(old, adapter):
+                if check:
+                    return ("WOULD upgrade the adapter: its command does not end in `|| true`, "
+                            "so a moved tool directory would block every prompt")
+                shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+                hook["command"] = old + " || true"
+                path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+                return (f"upgraded the {adapter} adapter (the command now ends in `|| true`, so "
+                        f"a moved tool directory cannot block a prompt; backup at {path.name}.bak)")
             if not interpreter_missing(old):
                 return f"{adapter} adapter already registered (no change)"
             if check:
@@ -253,7 +319,8 @@ def main() -> int:
 
     dest_rel = args.dest.replace("\\", "/").strip("/")
     dest = project / dest_rel
-    refusal = codex_refusal(project, dest_rel) if args.adapter == "codex" else None
+    refusal = (codex_refusal(project, dest_rel) if args.adapter == "codex"
+               else claude_refusal(project) if args.adapter == "claude-code" else None)
     if refusal and not args.check:   # before anything is copied: nothing was changed
         print(f"ABORT: {refusal}. Nothing was changed.", file=sys.stderr)
         return 2

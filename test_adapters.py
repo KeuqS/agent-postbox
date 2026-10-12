@@ -373,7 +373,8 @@ class CodexInstall(unittest.TestCase):
         (group,) = data["hooks"]["UserPromptSubmit"]
         (handler,) = group["hooks"]
         self.assertEqual(handler["command"].split(" ", 1)[1],
-                         '"$CLAUDE_PROJECT_DIR/tools/agent-postbox/hooks/agent_mail_check.py"')
+                         '"$CLAUDE_PROJECT_DIR/tools/agent-postbox/hooks/agent_mail_check.py"'
+                         ' || true')
         claude_bytes = settings.read_bytes()
         cp = install(self.project, "--adapter", "codex")
         self.assertEqual(cp.returncode, 0, cp.stderr)
@@ -412,6 +413,151 @@ class CodexInstall(unittest.TestCase):
         (self.project / "tools").rename(self.project / "tools-moved")
         moved = prompt(AGENT_MAIL_IDENTITY="bob")
         self.assertEqual((moved.returncode, moved.stdout), (0, b""))
+
+
+# The command install.py wrote for claude-code before it ended in `|| true`.
+LEGACY_CLAUDE_COMMAND = 'python3 "$CLAUDE_PROJECT_DIR/tools/agent-postbox/hooks/agent_mail_check.py"'
+
+
+class ClaudeCodeInstall(unittest.TestCase):
+    """`install.py --adapter claude-code`: the registered command cannot block a prompt.
+
+    Source, read 2026-10-12: https://code.claude.com/docs/en/hooks, "Exit code 2
+    behavior per event": `UserPromptSubmit` | Yes | "Blocks the prompt, so it never
+    reaches Claude." An interpreter that cannot open its script exits 2.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="test-adapters-")
+        self.addCleanup(tmp.cleanup)
+        self.project = Path(tmp.name).resolve() / "project"
+        (self.project / ".git").mkdir(parents=True)
+        self.settings = self.project / ".claude" / "settings.json"
+
+    def commands(self) -> list[str]:
+        data = json.loads(self.settings.read_text(encoding="utf-8"))
+        return [h["command"] for g in data["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
+
+    def prompt(self, command: str, **env: str) -> subprocess.CompletedProcess[bytes]:
+        """The registered string, run by a shell the way Claude Code runs a command hook."""
+        return subprocess.run(["/bin/sh", "-c", command], input=b'{"prompt": "hi"}',
+                              capture_output=True, cwd=self.project, timeout=TIMEOUT,
+                              env=clean_env(CLAUDE_PROJECT_DIR=str(self.project), **env))
+
+    def write_legacy(self, extra: dict[str, Any] | None = None) -> str:
+        data: dict[str, Any] = dict(extra or {})
+        data.setdefault("hooks", {}).setdefault("UserPromptSubmit", []).append(
+            {"hooks": [{"type": "command", "command": LEGACY_CLAUDE_COMMAND}]})
+        self.settings.parent.mkdir()
+        raw = json.dumps(data, indent=2) + "\n"
+        self.settings.write_text(raw, encoding="utf-8")
+        return raw
+
+    @unittest.skipUnless(os.name == "posix", "the registered command is a POSIX shell command")
+    def test_a_missing_script_exits_0_silently_and_the_positive_control_delivers(self) -> None:
+        self.assertEqual(install(self.project, "--adapter", "claude-code").returncode, 0)
+        (command,) = self.commands()
+        self.assertTrue(command.endswith(" || true"), command)
+        mid = send(self.project / "docs" / "agent-mail",
+                   self.project / "tools" / "agent-postbox" / "agent_mail.py",
+                   type="ASK", **{"from": "alice"}, to="bob", subject="positive control 5d1e")
+        cp = self.prompt(command, AGENT_MAIL_IDENTITY="bob")
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertIn(f"  ASK from alice [awaiting your reply]\n    positive control 5d1e\n"
+                      f"    id: {mid}\n", cp.stdout.decode())
+        (self.project / "tools").rename(self.project / "tools-moved")
+        moved = self.prompt(command, AGENT_MAIL_IDENTITY="bob")
+        self.assertEqual((moved.returncode, moved.stdout), (0, b""))
+        # the old command, same situation: exit 2, which blocks the prompt
+        self.assertEqual(self.prompt(LEGACY_CLAUDE_COMMAND, AGENT_MAIL_IDENTITY="bob").returncode, 2)
+
+    def test_an_older_registration_is_upgraded_in_place_once(self) -> None:
+        raw = self.write_legacy({"model": "ours", "hooks": {"Stop": [{"hooks": [
+            {"type": "command", "command": "true"}]}]}})
+        check = install(self.project, "--adapter", "claude-code", "--check")
+        self.assertEqual(check.returncode, 0, check.stderr)
+        self.assertIn("WOULD upgrade the adapter", check.stdout)
+        self.assertEqual(self.settings.read_text(encoding="utf-8"), raw)
+        cp = install(self.project, "--adapter", "claude-code")
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertIn("upgraded the claude-code adapter", cp.stdout)
+        self.assertEqual(self.commands(), [LEGACY_CLAUDE_COMMAND + " || true"])
+        data = json.loads(self.settings.read_text(encoding="utf-8"))
+        self.assertEqual((data["model"], data["hooks"]["Stop"][0]["hooks"][0]["command"]),
+                         ("ours", "true"))
+        self.assertEqual(self.settings.with_name("settings.json.bak").read_text(encoding="utf-8"),
+                         raw)
+        before = tree(self.project)
+        again = install(self.project, "--adapter", "claude-code")
+        self.assertIn("claude-code adapter already registered (no change)", again.stdout)
+        self.assertEqual(tree(self.project), before)
+        self.assertEqual(len(self.commands()), 1)
+
+    def test_refusals_copy_nothing_exit_2_and_say_why_in_one_line(self) -> None:
+        # The codex path's contract (CodexInstall above), for claude-code too: an
+        # unmergeable settings file is found before the tool is copied.
+        def settings(data: bytes) -> None:
+            self.settings.parent.mkdir()
+            self.settings.write_bytes(data)
+
+        cases: dict[str, tuple[Any, str]] = {
+            "not json": (lambda: settings(b'{"hooks": {'), "is not valid JSON"),
+            "a list": (lambda: settings(b"[]"), "is not a JSON object"),
+            "hooks is a list": (lambda: settings(b'{"hooks": []}'), "not an object"),
+            "group is a string": (lambda: settings(b'{"hooks": {"UserPromptSubmit": ["x"]}}'),
+                                  "not a matcher group"),
+            "not utf-8": (lambda: settings(b'{"model": "\xff"}'), "UnicodeDecodeError"),
+            "a directory": (lambda: self.settings.mkdir(parents=True), "cannot read"),
+            ".claude is a file": (lambda: (self.project / ".claude").write_bytes(b"x"),
+                                  "is not a directory"),
+        }
+        for name, (arrange, why) in cases.items():
+            with self.subTest(case=name):
+                shutil.rmtree(self.project)
+                (self.project / ".git").mkdir(parents=True)
+                arrange()
+                before = tree(self.project)
+                cp = install(self.project, "--adapter", "claude-code")
+                self.assertEqual(cp.returncode, 2, cp.stdout + cp.stderr)
+                self.assertEqual(cp.stdout, "")
+                self.assertNotIn("Traceback", cp.stderr)
+                lines = [ln for ln in cp.stderr.splitlines() if ln.startswith("ABORT")]
+                self.assertEqual(len(lines), 1, cp.stderr)
+                self.assertIn(why, lines[0])
+                self.assertTrue(lines[0].endswith("Nothing was changed."))
+                self.assertEqual(tree(self.project), before)
+                self.assertFalse((self.project / "tools").exists())
+                check = install(self.project, "--adapter", "claude-code", "--check")
+                self.assertEqual(check.returncode, 0, check.stderr)
+                self.assertIn("WOULD REFUSE", check.stdout)
+                self.assertIn(why, check.stdout)
+                self.assertEqual(tree(self.project), before)
+
+    def test_codex_refuses_a_codex_path_that_is_a_file(self) -> None:
+        (self.project / ".codex").write_bytes(b"x")
+        before = tree(self.project)
+        cp = install(self.project, "--adapter", "codex")
+        self.assertEqual((cp.returncode, cp.stdout), (2, ""), cp.stderr)
+        self.assertIn("is not a directory", cp.stderr)
+        self.assertEqual(tree(self.project), before)
+
+    def test_a_hand_written_command_is_left_alone(self) -> None:
+        # None of these starts with a Python interpreter, so none is ours to judge:
+        # a shell builtin (`cd` is a file on macOS and not on Linux, which is how
+        # this was found), an environment assignment, and `env`.
+        for mine in (
+            'cd "$CLAUDE_PROJECT_DIR" && python3 tools/agent-postbox/hooks/agent_mail_check.py',
+            'AGENT_MAIL_IDENTITY=agent-a python3 tools/agent-postbox/hooks/agent_mail_check.py',
+            'env AGENT_MAIL_IDENTITY=agent-a python3 tools/agent-postbox/hooks/agent_mail_check.py',
+        ):
+            with self.subTest(command=mine):
+                shutil.rmtree(self.project / ".claude", ignore_errors=True)
+                self.settings.parent.mkdir()
+                self.settings.write_text(json.dumps({"hooks": {"UserPromptSubmit": [
+                    {"hooks": [{"type": "command", "command": mine}]}]}}), encoding="utf-8")
+                cp = install(self.project, "--adapter", "claude-code")
+                self.assertIn("claude-code adapter already registered (no change)", cp.stdout)
+                self.assertEqual(self.commands(), [mine])
 
 
 @unittest.skipUnless(HOSTS_DOC.is_file(), "docs/hosts.md is not here")
