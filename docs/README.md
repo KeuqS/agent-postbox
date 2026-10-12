@@ -6,10 +6,19 @@
 * [identity.md](identity.md): optional Unix-user identity binding (PROTOCOL.md
   section 40): what a message file's owner proves, what it does not, and the
   attacks it was checked against.
+* [hosts.md](hosts.md): which hosts can run the pickup adapter (Claude Code,
+  Codex), which cannot (Cursor: polling only), what each mechanism guarantees,
+  and exactly what was verified and what was not.
 * [packaging.md](packaging.md): building and checking the wheel and sdist.
 * [benchmarking.md](benchmarking.md): `scripts/scenario.py`, the reproducible
   benchmark and reliability harness (hook pickup versus a polling baseline
   under injected faults): what is simulated, how to run it, how to read it.
+* [../examples/two-agents/](../examples/two-agents/README.md): a runnable
+  demo, two scripted sessions exchanging mail through the real tool
+  (`python examples/two-agents/run.py`; tested by `test_examples.py`).
+* [issues-to-open.md](issues-to-open.md): five starter issues drafted for the
+  tracker (known gaps, each with what was observed, acceptance criteria,
+  files to touch and how to test).
 * [handoff-example.md](handoff-example.md): a filled-in handoff packet
   (validated by `test_handoff.py`).
 * [publication-safety.md](publication-safety.md): the pre-publication scanner and how to configure it.
