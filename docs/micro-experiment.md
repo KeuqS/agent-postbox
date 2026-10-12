@@ -102,3 +102,19 @@ reported.
   delivery mechanism than anything a person would reliably provide.
 * The instance seed fixes the code and the arm order only; model sampling differs per
   run and is not seeded.
+
+## Amendment 1 (2026-10-12, before any measured run)
+
+The one-instance pilot (seed 1, nine sessions, about USD 0.022) found a **harness
+defect**, not a result: in arm P agent-a's Bash permission rules did not cover the
+single-quoted absolute path that the pickup hook prints in its `Reply:` line, so agent-a
+was denied the command and could not answer (`permission_denials: 1`). The rules now cover
+the relative, double-quoted, single-quoted and bare absolute forms. The pilot's outcomes
+are reported as a shakedown in the results and are **not** part of the measured data;
+measured instances use seeds 101 and up, so no seed is reused.
+
+The pilot also measured cost: about USD 0.0025 per session, roughly a hundred times
+below the assumption in coordination-experiment.md. The "capped at 10" instances rule
+above was written against the old assumption; it is replaced by **20 instances (60 runs,
+180 sessions)**, chosen from cost alone. The USD 14 ceiling and the stopping rule are
+unchanged. Nothing else in the design changes.
