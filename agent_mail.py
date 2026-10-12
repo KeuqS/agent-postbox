@@ -935,13 +935,16 @@ def resolve_body(args: argparse.Namespace) -> str | None:
     if args.body_file:
         if args.body_file == "-":
             try:
-                body = sys.stdin.read() if sys.stdin is not None else ""
+                body = sys.stdin.read(MAX_BODY_BYTES + 1) if sys.stdin is not None else ""
             except (OSError, UnicodeDecodeError) as e:
                 print(f"cannot read the body from stdin: {e}", file=sys.stderr)
                 return None
         else:
             try:
-                body = Path(args.body_file).read_text(encoding="utf-8")
+                # At most one character more than the limit is held: a longer body is
+                # refused by the size check whatever follows, so never read the rest.
+                with open(args.body_file, encoding="utf-8") as fh:
+                    body = fh.read(MAX_BODY_BYTES + 1)
             except (OSError, UnicodeDecodeError) as e:
                 print(f"cannot read --body-file {args.body_file!r}: {e}", file=sys.stderr)
                 return None
@@ -959,7 +962,7 @@ def resolve_body(args: argparse.Namespace) -> str | None:
         # ``… | agent_mail.py send …`` without inventing a temp file.
         if sys.stdin is not None and not sys.stdin.isatty():
             try:
-                body = sys.stdin.read()
+                body = sys.stdin.read(MAX_BODY_BYTES + 1)
             except (OSError, UnicodeDecodeError) as e:
                 print(f"cannot read the body from stdin: {e}", file=sys.stderr)
                 return None
@@ -1231,6 +1234,23 @@ def load_identity_bindings(path: Path | None = None) -> dict[str, IdentityBindin
         raw = _parse_bindings_text(text)
         return {ident: _resolve_binding(ident, cell) for ident, cell in sorted(raw.items())}
     return {}
+
+
+def identity_bindings_unreadable(path: Path | None = None) -> str:
+    """Why `load_identity_bindings` saw no table, when the cause is that the
+    PARTICIPANTS.md it would have read cannot be read (permissions, not UTF-8):
+    "PermissionError", "UnicodeDecodeError" and so on. "" when the file is
+    absent or readable. `load_identity_bindings` itself still returns `{}` for
+    both; this only lets `doctor` say which. Never raises."""
+    for p in [path] if path else participants_paths():
+        if p is None or not _is_file(p):
+            continue
+        try:
+            p.read_text(encoding="utf-8")
+        except (OSError, ValueError) as e:
+            return e.__class__.__name__
+        return ""
+    return ""
 
 
 def _reader_uid() -> int | None:
@@ -3352,6 +3372,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # a mailbox that declares none. A mismatch, or a binding that cannot be
     # resolved, fails: the check was asked for and did not pass (fail closed).
     bindings = load_identity_bindings()
+    if not bindings and (why := identity_bindings_unreadable()):
+        # Additive, doctor only, no effect on the exit status: an unreadable table
+        # reads as "no bindings", which is indistinguishable from not having opted in.
+        print(f"identity_bindings: UNREADABLE ({why}); PARTICIPANTS.md could not be read, "
+              "so the identity checks did not run")
     if bindings:
         ident = identity_report(everything, bindings, box)
         for line in identity_lines(ident, bullet="  - "):

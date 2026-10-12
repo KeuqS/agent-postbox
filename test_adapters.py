@@ -559,6 +559,184 @@ class ClaudeCodeInstall(unittest.TestCase):
                 self.assertIn("claude-code adapter already registered (no change)", cp.stdout)
                 self.assertEqual(self.commands(), [mine])
 
+# Runs install.py with a kill injected at the settings write, not by timing: the
+# write half-lands and the process dies (the old `Path.write_text`), or the process
+# dies at the first fsync (the temp file written, nothing yet renamed). The same
+# script tears whichever write the installer under test uses.
+KILLED_WRITE = """\
+import os, pathlib, runpy, sys
+real = pathlib.Path.write_text
+def torn(self, data, *a, **k):
+    if self.name in ("settings.json", "hooks.json"):
+        with open(self, "w") as f:
+            f.write(data[: len(data) // 2])
+        os._exit(137)
+    return real(self, data, *a, **k)
+pathlib.Path.write_text = torn
+os.fsync = lambda fd: os._exit(137)
+sys.argv = ["install.py", *sys.argv[1:]]
+runpy.run_path(%r, run_name="__main__")
+"""
+
+
+class PathRefusals(unittest.TestCase):
+    """A file where the tool or the mailbox must go is refused before anything is copied."""
+
+    def test_a_file_in_the_way_is_refused_with_one_line_and_nothing_changed(self) -> None:
+        def file_at(rel: str) -> Any:
+            def arrange(project: Path) -> None:
+                (project / rel).parent.mkdir(parents=True, exist_ok=True)
+                (project / rel).write_bytes(b"x")
+            return arrange
+
+        def dir_at(rel: str) -> Any:
+            return lambda project: (project / rel).mkdir(parents=True)
+
+        def dangling(project: Path) -> None:
+            (project / "docs").mkdir()
+            (project / "docs" / "agent-mail").symlink_to(project / "nowhere")
+
+        cases: dict[str, tuple[Any, str]] = {
+            "the mailbox is a file": (file_at("docs/agent-mail"), "docs/agent-mail exists and is not"),
+            "a parent of the mailbox is a file": (file_at("docs"), "docs exists and is not"),
+            "the destination is a file": (file_at("tools/agent-postbox"), "agent-postbox exists and is not"),
+            "a parent of the destination is a file": (file_at("tools"), "tools exists and is not"),
+            "hooks is a file": (file_at("tools/agent-postbox/hooks"), "hooks exists and is not"),
+            "a payload name is a directory": (dir_at("tools/agent-postbox/selftest.py"),
+                                              "selftest.py is a directory"),
+            "PARTICIPANTS.md is a directory": (dir_at("docs/agent-mail/PARTICIPANTS.md"),
+                                               "PARTICIPANTS.md is a directory"),
+        }
+        if os.name == "posix":
+            cases["the mailbox is a dangling link"] = (dangling, "docs/agent-mail exists and is not")
+        for name, (arrange, why) in cases.items():
+            for extra in ([], ["--adapter", "claude-code"], ["--adapter", "codex"]):
+                with self.subTest(case=name, args=extra):
+                    with tempfile.TemporaryDirectory(prefix="test-adapters-") as tmp:
+                        project = Path(tmp).resolve() / "project"
+                        (project / ".git").mkdir(parents=True)
+                        arrange(project)
+                        before = tree(project)
+                        dirs = sorted(str(p.relative_to(project)) for p in project.rglob("*"))
+                        cp = install(project, *extra)
+                        self.assertEqual((cp.returncode, cp.stdout), (2, ""), cp.stderr)
+                        self.assertNotIn("Traceback", cp.stderr)
+                        lines = [ln for ln in cp.stderr.splitlines() if ln.startswith("ABORT")]
+                        self.assertEqual(len(lines), 1, cp.stderr)
+                        self.assertIn(why, lines[0])
+                        self.assertTrue(lines[0].endswith("Nothing was changed."))
+                        self.assertEqual(tree(project), before)
+                        self.assertEqual(sorted(str(p.relative_to(project))
+                                                for p in project.rglob("*")), dirs)
+                        check = install(project, "--check", *extra)
+                        self.assertEqual(check.returncode, 0, check.stderr)
+                        self.assertIn("WOULD REFUSE", check.stdout)
+                        self.assertIn(why, check.stdout)
+
+
+class SettingsWrite(unittest.TestCase):
+    """The user's other settings live in the file the installer rewrites."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="test-adapters-")
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.project = self.root / "project"
+        (self.project / ".git").mkdir(parents=True)
+        self.files = {"claude-code": self.project / ".claude" / "settings.json",
+                      "codex": self.project / ".codex" / "hooks.json"}
+        self.theirs = json.dumps({"model": "mine", "permissions": {"allow": ["Bash(ls)"]}},
+                                 indent=4) + "\n"
+
+    def killed(self, adapter: str) -> subprocess.CompletedProcess[str]:
+        script = self.root / "killed_write.py"
+        script.write_text(KILLED_WRITE % str(INSTALL), encoding="utf-8")
+        return subprocess.run([sys.executable, "-I", str(script), str(self.project),
+                               "--adapter", adapter], capture_output=True, text=True,
+                              timeout=TIMEOUT, env=clean_env())
+
+    def test_a_write_killed_midway_leaves_the_users_file_whole(self) -> None:
+        for adapter, config in self.files.items():
+            with self.subTest(adapter=adapter):
+                config.parent.mkdir(parents=True, exist_ok=True)
+                config.write_text(self.theirs, encoding="utf-8")
+                cp = self.killed(adapter)
+                self.assertEqual(cp.returncode, 137, cp.stdout + cp.stderr)   # the fault fired
+                self.assertEqual(config.read_text(encoding="utf-8"), self.theirs)
+                # a re-run after the kill registers exactly once and keeps their keys
+                again = install(self.project, "--adapter", adapter)
+                self.assertEqual(again.returncode, 0, again.stderr)
+                data = json.loads(config.read_text(encoding="utf-8"))
+                self.assertEqual(data["model"], "mine")
+                self.assertEqual(len(data["hooks"]["UserPromptSubmit"]), 1)
+
+    def test_the_first_backup_is_the_original_and_is_never_overwritten(self) -> None:
+        for adapter, config in self.files.items():
+            with self.subTest(adapter=adapter):
+                config.parent.mkdir(parents=True, exist_ok=True)
+                config.write_text(self.theirs, encoding="utf-8")
+                first = install(self.project, "--adapter", adapter)
+                self.assertIn(f"backup at {config.name}.bak)", first.stdout)
+                # a repair: the registered interpreter is no longer on PATH
+                data = json.loads(config.read_text(encoding="utf-8"))
+                data["edited"] = "after the first run"
+                hook = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+                hook["command"] = "python9.9 " + hook["command"].split(" ", 1)[1]
+                config.write_text(json.dumps(data), encoding="utf-8")
+                second = install(self.project, "--adapter", adapter)
+                self.assertEqual(second.returncode, 0, second.stderr)
+                self.assertIn("repaired", second.stdout)
+                self.assertIn(f"backup at {config.name}.bak.1", second.stdout)
+                self.assertIn(f"{config.name}.bak still holds your original", second.stdout)
+                self.assertEqual(config.with_name(config.name + ".bak").read_text(encoding="utf-8"),
+                                 self.theirs)
+                self.assertEqual(json.loads(config.with_name(config.name + ".bak.1")
+                                            .read_text(encoding="utf-8"))["edited"],
+                                 "after the first run")
+                # and once more: .bak.2, the first two untouched
+                data = json.loads(config.read_text(encoding="utf-8"))
+                hook = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+                hook["command"] = "python9.9 " + hook["command"].split(" ", 1)[1]
+                config.write_text(json.dumps(data), encoding="utf-8")
+                self.assertEqual(install(self.project, "--adapter", adapter).returncode, 0)
+                self.assertTrue(config.with_name(config.name + ".bak.2").is_file())
+                self.assertEqual(config.with_name(config.name + ".bak").read_text(encoding="utf-8"),
+                                 self.theirs)
+
+    def test_a_settings_file_that_was_not_there_has_no_backup_to_mention(self) -> None:
+        config = self.files["claude-code"]
+        config.parent.mkdir()
+        config.with_name("settings.json.bak").write_text("an unrelated old file", encoding="utf-8")
+        cp = install(self.project, "--adapter", "claude-code")
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertNotIn("backup", cp.stdout)
+        self.assertEqual(config.with_name("settings.json.bak").read_text(encoding="utf-8"),
+                         "an unrelated old file")
+
+    @unittest.skipUnless(os.name == "posix", "permission bits")
+    def test_the_mode_is_kept_and_no_temp_file_is_left(self) -> None:
+        for adapter, config in self.files.items():
+            with self.subTest(adapter=adapter):
+                config.parent.mkdir(parents=True, exist_ok=True)
+                config.write_text(self.theirs, encoding="utf-8")
+                config.chmod(0o640)
+                self.assertEqual(install(self.project, "--adapter", adapter).returncode, 0)
+                self.assertEqual(config.stat().st_mode & 0o777, 0o640)
+                self.assertEqual([p.name for p in config.parent.iterdir() if p.name.endswith(".tmp")], [])
+
+    @unittest.skipUnless(os.name == "posix", "symlinks")
+    def test_a_symlinked_settings_file_is_written_through(self) -> None:
+        config = self.files["claude-code"]
+        config.parent.mkdir()
+        real = self.root / "dotfiles" / "settings.json"
+        real.parent.mkdir()
+        real.write_text(self.theirs, encoding="utf-8")
+        config.symlink_to(real)
+        self.assertEqual(install(self.project, "--adapter", "claude-code").returncode, 0)
+        self.assertTrue(config.is_symlink())
+        self.assertIn("agent_mail_check.py", real.read_text(encoding="utf-8"))
+        self.assertEqual(json.loads(real.read_text(encoding="utf-8"))["model"], "mine")
+
 
 @unittest.skipUnless(HOSTS_DOC.is_file(), "docs/hosts.md is not here")
 class HostsDoc(unittest.TestCase):

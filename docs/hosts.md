@@ -59,8 +59,11 @@ there is no Codex-specific script; there is a registration:
 python agent-postbox/install.py /path/to/your/project --adapter codex
 ```
 
-which merges this into the project's `.codex/hooks.json` (a backup is written
-first; a second run changes nothing):
+which merges this into the project's `.codex/hooks.json` (the file is replaced
+atomically, so an interrupted install cannot leave half a file; a backup is
+written first, and the first one, `hooks.json.bak`, is your file as it was and
+is never overwritten: a later upgrade or repair writes `hooks.json.bak.1`,
+`.bak.2`, and so on; a second run that has nothing to change writes nothing):
 
 ```json
 {
@@ -92,6 +95,12 @@ characters a shell would re-interpret, `.codex/hooks.json` is not JSON of the
 documented nesting, or `.codex/config.toml` already defines hooks inline
 ("If a single layer contains both `hooks.json` and inline `[hooks]`, Codex
 merges them and warns at startup").
+
+For either adapter, or none, it also refuses (exit 2, one `ABORT` line, nothing
+changed; `--check` prints `WOULD REFUSE`) when a file or a dangling link sits
+where a directory must go: the mailbox path or one of its parents, `--dest` or
+one of its parents, `<dest>/hooks`, or a name it would copy over that is a
+directory.
 
 ### What this guarantees, compared with Claude Code's `UserPromptSubmit`
 

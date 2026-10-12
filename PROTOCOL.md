@@ -754,7 +754,10 @@ BOM. `--from`/`--to` must match `[a-z0-9][a-z0-9._@+-]*` (max 128, no `..`).
 Bodies may not contain NUL, ESC, BEL, DEL or C1 controls (max 16 MiB). Subject
 max 500 characters, other headers 4096. Subjects are stored NFC-normalised.
 `--scope` and `--key` are only hashed into lock names, so they are not path
-restricted.
+restricted. `send` reads at most 16 MiB plus one character from `--body-file`
+or stdin: a longer body is refused ("body is larger than 16777216 bytes")
+without being held in memory, and that is the message printed even when a
+forbidden character lies beyond the point where reading stopped.
 
 **Quarantined at read (`REJECT <file>: reason` on stderr, never delivered, never
 deleted).** Symlinks of any kind (never followed), FIFOs, devices, directories
@@ -2012,6 +2015,14 @@ name is quarantined before this check (§5a, §36); a hard link keeps its
 owner, so ownership cannot be forged, but a file the bound user created
 elsewhere can be given a name here, which is what `IDENTITY_SHARED_INODE`
 flags while both names exist. `docs/identity.md` states each limit.
+
+**An unreadable table (`doctor` only).** A `PARTICIPANTS.md` that exists
+but cannot be read (no permission, not UTF-8) declares no binding, as it
+always has, so `status` and the readers do not run the checks above. `doctor`
+now says so with one extra line, `identity_bindings: UNREADABLE (<exception
+class>); PARTICIPANTS.md could not be read, so the identity checks did not
+run`, and its exit status is unchanged. An absent file, and a readable one,
+print nothing new.
 
 **What callers observe.** Without a binding: nothing. With one: the lines,
 keys, codes and the `send` refusal above. No existing line, key, code or
