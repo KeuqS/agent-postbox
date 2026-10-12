@@ -48,7 +48,7 @@ ever accepted, take them one after the other.
 * `test_readme_examples.py` executes every `bash runnable` block of
   `README.md` and resolves every "section N" reference to a real `PROTOCOL.md`
   heading. Change an example or renumber nothing without running it.
-* `PROTOCOL.md` section numbers are never reused. The next free number is 41
+* `PROTOCOL.md` section numbers are never reused. The next free number is the one after the last heading in `PROTOCOL.md`
   (the last heading is "40. Identity binding").
 * Never run the CLI against the checkout as a mailbox (SECURITY.md): set
   `AGENT_MAIL_DIR` to a temporary directory, as the commands below do.
@@ -110,12 +110,12 @@ with a `results_attention_truncated` count).
 
 **Acceptance criteria.**
 
-- [ ] A new numbered `PROTOCOL.md` section (41) defines both keys. Section 39
+- [ ] A new numbered `PROTOCOL.md` section (the next free number) defines both keys. Section 39
       is not edited; the new section says it supersedes the one sentence
       "No other key is added". Sections 29 (line 775) and 37 (line 1679)
       already say keys are only ever added within a schema.
 - [ ] `test_hardening.py` line 279: the key-set list names the new keys
-      explicitly, with a comment citing section 41. It stays an exact
+      explicitly, with a comment citing the new section. It stays an exact
       comparison.
 - [ ] Text `status` is byte-for-byte unchanged, with and without results.
 - [ ] A mailbox with one `DONE` result reports `with_result: 1` and
