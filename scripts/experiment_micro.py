@@ -67,12 +67,14 @@ CHANNEL = {
             "agent-a for something: `python3 tools/agent-postbox/agent_mail.py send --type "
             "ASK --from agent-b --to agent-a --subject '<subject>' --body '<text>'`. If "
             "mail you were shown has an answer, read its body with `python3 "
-            "tools/agent-postbox/agent_mail.py show <id>`."),
+            "tools/agent-postbox/agent_mail.py show <id>`."
+            " Run each mail command as its own Bash call: no `cd`, `;`, `&&`, pipes or redirects (a compound command is refused)."),
         A: ("Team mail uses `python3 tools/agent-postbox/agent_mail.py` (Bash). If mail "
             "shown to you asks you something, answer with the Reply command shown (put "
             "the information in --body, add --result DONE). To tell a teammate something "
             "unprompted: `python3 tools/agent-postbox/agent_mail.py send --type NOTICE "
-            "--from agent-a --to agent-b --subject '<subject>' --body '<text>'`."),
+            "--from agent-a --to agent-b --subject '<subject>' --body '<text>'`."
+            " Run each mail command as its own Bash call: no `cd`, `;`, `&&`, pipes or redirects (a compound command is refused)."),
     },
     "C1": {
         B: ("To tell or ask the team something, write a line starting with `TO TEAM:` in "

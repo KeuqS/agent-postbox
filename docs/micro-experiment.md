@@ -118,3 +118,19 @@ below the assumption in coordination-experiment.md. The "capped at 10" instances
 above was written against the old assumption; it is replaced by **20 instances (60 runs,
 180 sessions)**, chosen from cost alone. The USD 14 ceiling and the stopping rule are
 unchanged. Nothing else in the design changes.
+
+## Amendment 2 (2026-10-12, before any measured run)
+
+Two shakedown runs after Amendment 1 (seeds 1 and 101, arm P, one run each) were still
+refused: the agents chained commands (`cd ... &&`, `...; echo exit=$?`) and the permission
+rules only admit a plain `agent_mail.py` call, so the whole Bash call was denied
+(`permission_denials` listed the commands). This is a property of the harness's
+restricted-Bash mode, not of Postbox. The arm P instruction now adds one sentence: run
+each mail command as its own Bash call, with no `cd`, `;`, `&&`, pipes or redirects. The
+instruction in P is therefore longer than in C1 and C2; every run records its prompt
+lengths. Measured seeds remain 101 and up; a third shakedown (seed 102, arm P) checks the fix.
+
+**Seeds.** Seeds 101 and 102 were used by shakedown runs, so the measured instances are
+seeds **201 to 220** (20 instances, 3 arms, 60 runs). Shakedown runs (seeds 1, 101, 102)
+are listed in the results and excluded from the measured data, for the stated harness
+reasons only.
