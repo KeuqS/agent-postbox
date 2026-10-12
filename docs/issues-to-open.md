@@ -18,14 +18,14 @@ numbers are for that tree and drift; the names beside them are stable.
 
 | Rank | Entry | Decision | Labels | Why |
 | --- | --- | --- | --- | --- |
-| 1 | A. CONTRIBUTING.md names 6 of the 26 files CI type-checks | **open now** | `documentation`, `good first issue`, `help wanted` | A demonstrated gap (26 files in `ci.yml` against 6 in CONTRIBUTING.md), one file to edit, checkable by diffing two strings |
-| 2 | B. Run the pickup adapter inside a real Codex and record the result | **open now** | `field-report`, `help wanted` | `docs/hosts.md` states that nothing was observed inside Codex and gives a five-step checklist with a positive control; needs only a Codex install |
+| 1 | A. CONTRIBUTING.md names 6 of the 26 files CI type-checks | opened as #20 | `documentation`, `good first issue`, `help wanted` | A demonstrated gap (26 files in `ci.yml` against 6 in CONTRIBUTING.md), one file to edit, checkable by diffing two strings |
+| 2 | B. Run the pickup adapter inside a real Codex and record the result | opened as #21 | `field-report`, `help wanted` | `docs/hosts.md` states that nothing was observed inside Codex and gives a five-step checklist with a positive control; needs only a Codex install |
 | 3 | C. `status --json`: report ask results as keys | hold | `enhancement` | Reverses a choice section 39 made on purpose, and a consumer can already derive the numbers from `list --json`; no one has asked for it |
 | 4 | D. `inbox` / `list` exit 2 while the listing is complete and a file is quarantined | hold | `enhancement` | The behaviour is documented and intended; whether to change an exit status is the owner's decision (three options, one is "do nothing") |
 | 5 | E. `status`: see a dead holder inside the first 60 seconds | hold | `enhancement` | Reproduced, but the only consumer is this repo's own harness, and the fix is a protocol design choice (flag or field) not yet made |
 | - | Former issue 3 (orphaned key marker after a refused retry) | **dropped** | - | Already fixed: PROTOCOL.md section 31 "Refused at the scope stage", `test_field.py` phase "orphan", CHANGELOG.md line 207 |
 
-Open A and B now; they do not depend on each other or on anything in Hold.
+A and B are open (#20, #21); they do not depend on each other or on anything in Hold.
 C, D and E are independent of each other, but C and E both add keys to
 `status --json` and therefore both touch the same pin (see Traps); if both are
 ever accepted, take them one after the other.
@@ -55,133 +55,10 @@ ever accepted, take them one after the other.
 
 ---
 
-## A. CONTRIBUTING.md lists 6 files for `mypy`; CI type-checks 26
+## Opened
 
-**Labels:** `documentation`, `good first issue`, `help wanted`
-
-**Title:** CONTRIBUTING.md's `mypy` command checks 6 files; CI checks 26
-
-**Summary.** CONTRIBUTING.md tells a contributor which commands must pass
-before a pull request. Its `mypy` command names 6 files; the `mypy` step CI
-runs names 26. A contributor who follows CONTRIBUTING.md and edits, say,
-`selftest.py` or `test_cli.py` gets a clean local run and a red CI job. The
-pull request template already has the full line.
-
-**Evidence.** Run from a clone:
-
-```sh
-grep -o 'run: mypy.*' .github/workflows/ci.yml | tr ' ' '\n' | tail -n +3 | wc -l
-sed -n 63p CONTRIBUTING.md | tr ' ' '\n' | grep -c '\.py'
-```
-
-Observed: `26` and `6`. CONTRIBUTING.md line 63 reads:
-
-```text
-`mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py`
-```
-
-while `.github/workflows/ci.yml` line 77 continues with
-`scripts/repro_build.py scripts/verify_release.py scripts/scenario.py
-scripts/team_sim.py stress_test.py test_field.py ... scripts/e2e_claude.py
-test_e2e_script.py`. `.github/pull_request_template.md` line 5 carries the
-full list. CONTRIBUTING.md says "`ci.yml` is the source of truth", so the
-sentence is true, but the command beside it is a trap.
-
-**Acceptance criteria.**
-
-- [ ] The `mypy` command in CONTRIBUTING.md names exactly the files of the
-      `mypy` step in `.github/workflows/ci.yml`, in the same order, so the two `grep` commands in Evidence both print
-      `26` and the names match line for line.
-- [ ] `python test_publication.py` and `python test_readme_examples.py` pass
-      (`test_publication.py` reads CONTRIBUTING.md at line 1566).
-- [ ] No other file changes. In particular, do not touch `ci.yml`.
-- [ ] Optional, only if it stays small: one assertion in
-      `test_publication.py` that the three places (`ci.yml`, CONTRIBUTING.md,
-      the pull request template) name the same files, so they cannot drift
-      again. If added, it must fail when one of the three is edited (show
-      that in the pull request) and `test_publication.py` is already on the
-      `mypy` line.
-
-**Files.** `CONTRIBUTING.md` (line 63). Optionally `test_publication.py`.
-
-**Out of scope.** Changing which files CI type-checks; restructuring
-CONTRIBUTING.md.
-
-**Dependencies.** None.
-
----
-
-## B. Run the pickup adapter inside a real Codex and record what happened
-
-**Labels:** `field-report`, `help wanted` (not `good first issue`: it needs a
-Codex install and a trust step in an interactive UI)
-
-**Title:** Field check: `hooks/agent_mail_check.py` inside the real Codex CLI
-
-**Summary.** The adapter is host-neutral: it reads `AGENT_MAIL_IDENTITY`,
-prints live mail as plain text and always exits 0 (PROTOCOL.md sections 9 and
-33). `docs/hosts.md` records that it was observed inside Claude Code
-(headless, 2026-10-12) and states for Codex: "not run inside the real host
-(`test_adapters.py`, `scripts/scenario.py --pickup codex`). Confirm with the
-checklist below". Nothing in the repository shows that Codex puts the
-adapter's text in front of the model. This issue is that check.
-
-**Evidence that the adapter side works** (so a failure is attributable to the
-host). In a throwaway directory:
-
-```sh
-export AGENT_MAIL_DIR="$(mktemp -d)/box"; mkdir -p "$AGENT_MAIL_DIR"
-python3 agent_mail.py send --type NOTICE --from alice --to bob --subject "control 4417" --body x
-python3 hooks/agent_mail_check.py; echo "exit $?"                           # silent, exit 0
-AGENT_MAIL_IDENTITY=bob python3 hooks/agent_mail_check.py; echo "exit $?"   # prints the notice, exit 0
-```
-
-Observed: the first prints nothing and exits 0 (identity unset: a silent
-adapter looks exactly like an empty inbox); the second prints
-`Agent mail - 1 live message(s) addressed to 'bob'.`, the subject
-`control 4417` and the message id, and exits 0.
-
-**What to do.** Follow the five steps under "Confirm it in the real host" in
-`docs/hosts.md` (Codex section, after "What was verified, and what was not"):
-install with `python install.py <project> --adapter codex`, trust the hook in
-`/hooks`, send the control NOTICE from another identity, ask Codex to quote
-its subject with no tools, then repeat with `AGENT_MAIL_IDENTITY` unset and
-from a subdirectory.
-
-**Acceptance criteria.**
-
-- [ ] The report names the Codex version, the operating system, `python -V`
-      and `python agent_mail.py --version`.
-- [ ] It shows the `.codex/hooks.json` that `install.py` wrote (private paths
-      replaced).
-- [ ] Step 4 result: whether Codex's answer quoted the control subject without
-      running a command. A screenshot of the adapter run by hand does not
-      count.
-- [ ] Step 5 result: what happens with the identity unset, and from a
-      subdirectory with it set.
-- [ ] Whether the hook ran in `codex exec` or the IDE extension, only if you
-      tried it (`docs/hosts.md` lists these as "not stated"). Say "not tried"
-      otherwise.
-- [ ] No message bodies, no private names, hosts or paths (CONTRIBUTING.md,
-      "Field report walkthrough").
-- [ ] A follow-up pull request edits the Codex row of the matrix and the
-      "Not verified" sentence in `docs/hosts.md` to say what was observed,
-      with the date and versions. A host that does not work is recorded as
-      such, with the reason. Run `python test_publication.py` and
-      `python test_adapters.py` first: both read `docs/hosts.md`.
-- [ ] If the check finds a bug in `hooks/agent_mail_check.py` or
-      `install.py`, open a separate bug issue with a failing check for
-      `selftest.py` or `test_adapters.py`; do not fold the fix into this one.
-
-**Files.** `docs/hosts.md` only, unless a bug is found.
-
-**Out of scope.** Cursor (`docs/hosts.md`: its `beforeSubmitPrompt` cannot put
-text in front of the model, so there is no adapter to check); Windows; adding
-a host-specific script.
-
-**Dependencies.** None.
-
----
+* A (CONTRIBUTING.md's `mypy` command) is issue #20 (`documentation`, `good first issue`, `help wanted`).
+* B (field check of the adapter inside the real Codex CLI) is issue #21 (`field-report`, `help wanted`).
 
 # Hold
 
