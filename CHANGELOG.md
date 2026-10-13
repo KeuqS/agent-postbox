@@ -7,6 +7,18 @@ behaviour).
 
 ## [Unreleased]
 
+### Added
+
+- `send` writes one stderr warning (exit status and stdout unchanged) when `--to` is not a
+  row, alias or broadcast word in the mailbox's own `PARTICIPANTS.md`, with the nearest
+  name: a mistyped recipient used to look exactly like an empty inbox. Silent for a mailbox
+  with no table. PROTOCOL.md section 41.
+- `doctor` prints where the pickup hook is registered (`.claude/settings.json`,
+  `.codex/hooks.json`), whether the script it names exists, and whether
+  `AGENT_MAIL_IDENTITY` is set: a hook whose script moved, or an unset identity, used to
+  look like an empty inbox. Informational; no change to `doctor`'s exit status. Found by
+  `docs/first-use-audit.md`.
+
 ## [0.5.0] - 2026-10-12
 
 ### Added
